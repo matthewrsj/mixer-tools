@@ -12,7 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	_ "github.com/ulikunitz/xz"
+	"github.com/ulikunitz/xz"
 )
 
 const DebugFullfiles = false
@@ -25,6 +25,7 @@ var fullfileCompressors = []struct {
 	ExternalTarExtraArg string
 }{
 	{"gzip", compressGzip, ""},
+	{"xz", compressXZ, ""},
 	{"external-tar-bzip2", nil, "--bzip2"},
 	{"external-tar-gzip", nil, "--gzip"},
 	{"external-tar-xz", nil, "--xz"},
@@ -344,4 +345,16 @@ func compressGzip(dst io.Writer, src io.Reader) error {
 		return err
 	}
 	return gw.Close()
+}
+
+func compressXZ(dst io.Writer, src io.Reader) error {
+	xw, err := xz.NewWriter(dst)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(xw, src)
+	if err != nil {
+		return err
+	}
+	return xw.Close()
 }
