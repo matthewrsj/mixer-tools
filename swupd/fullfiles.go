@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	_ "github.com/dsnet/compress/bzip2"
 	"github.com/ulikunitz/xz"
 )
 
