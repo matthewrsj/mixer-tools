@@ -11,6 +11,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+
+	_ "github.com/ulikunitz/xz"
 )
 
 const DebugFullfiles = false
