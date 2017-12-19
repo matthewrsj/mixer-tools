@@ -7,10 +7,33 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"syscall"
 )
 
+// #include <unistd.h>
+// #include <stdlib.h>
+// #include <stdint.h>
+// #include <sys/stat.h>
+// uint64_t get_ifmt() { return S_IFMT; }
+// uint64_t get_ifreg() { return S_IFREG; }
+// uint64_t get_ifdir() { return S_IFDIR; }
+// uint64_t get_iflnk() { return S_IFLNK; }
+import "C"
+import "unsafe"
+
 type hashval int
+
+// Defined as Go types to ensure that we can do bit operations with it.
+var s_ifmt C.uint64_t
+var s_ifreg C.uint64_t
+var s_ifdir C.uint64_t
+var s_iflnk C.uint64_t
+
+func init() {
+	s_ifmt = C.get_ifmt()
+	s_ifreg = C.get_ifreg()
+	s_ifdir = C.get_ifdir()
+	s_iflnk = C.get_iflnk()
+}
 
 var AllZeroHash = "0000000000000000000000000000000000000000000000000000000000000000"
 
@@ -41,31 +64,34 @@ func HashEquals(h1 hashval, h2 hashval) bool {
 
 // Hashcalc returns the swupd hash for the given file
 func Hashcalc(filename string) (hashval, error) {
-	var info syscall.Stat_t
-	var err error
 	var data []byte
-	if err = syscall.Lstat(filename, &info); err != nil {
-		return 0, fmt.Errorf("Error stating file '%s' %v\n", filename, err)
+	var err error
+	var info C.struct_stat
+	cs := C.CString(filename)
+	defer C.free(unsafe.Pointer(cs))
+	if errno := C.lstat(cs, &info); errno != 0 {
+		return 0, fmt.Errorf("Error stating file '%s' %v\n", filename, errno)
 	}
-	// Get magic constants out of /usr/include/bits/stat.h
-	switch info.Mode & 0170000 {
-	case 0100000: // Regular file
+	file_type := C.uint64_t(info.st_mode) & s_ifmt
+	switch file_type {
+	case s_ifreg: // Regular file
 		data, err = ioutil.ReadFile(filename)
 		if err != nil {
 			return 0, fmt.Errorf("Read error for '%s' %v\n", filename, err)
 		}
-	case 0040000: // Directory
-		info.Size = 0
+	case s_ifdir: // Directory
+		info.st_size = 0
 		data = []byte("DIRECTORY") // fixed magic string
-	case 0120000:
-		info.Mode = 0
-		target, err := os.Readlink(filename)
+	case s_iflnk: // Symbolic link
+		info.st_mode = 0
+		var target string
+		target, err = os.Readlink(filename)
 		if err != nil {
 			return 0, fmt.Errorf("Error readlink file '%s' %v\n", filename, err)
 		}
 		data = []byte(target)
 	default:
-		return 0, fmt.Errorf("%s is not a file, directory or symlink %o", filename, info.Mode&0170000)
+		return 0, fmt.Errorf("%s is not a file, directory or symlink %o", filename, file_type)
 	}
 	r := internHash(genHash(info, data))
 	return r, nil
@@ -73,7 +99,7 @@ func Hashcalc(filename string) (hashval, error) {
 
 // genHash generates hash string from butchered Stat_t and data
 // Expects that its callers have validated the arguments
-func genHash(info syscall.Stat_t, data []byte) string {
+func genHash(info C.struct_stat, data []byte) string {
 	key := hmacComputeKey(info)
 	result := hmacSha256ForData(key, data)
 	return string(result[:])
@@ -109,16 +135,16 @@ func set(out []byte, in int64) {
 // hmacComputeKey returns what should be an ascii string as an array of byte
 // it is really ugly to be compatible with the C implementation. It is not portable
 // as the C version isn't portable.
-// The syscall.Stat_t has been butchered
-func hmacComputeKey(info syscall.Stat_t) []byte {
+// The C.struct_stat has been butchered
+func hmacComputeKey(info C.struct_stat) []byte {
 	// Create the key
 	updatestat := [40]byte{}
-	set(updatestat[0:8], int64(info.Mode))
-	set(updatestat[8:16], int64(info.Uid))
-	set(updatestat[16:24], int64(info.Gid))
+	set(updatestat[0:8], int64(info.st_mode))
+	set(updatestat[8:16], int64(info.st_uid))
+	set(updatestat[16:24], int64(info.st_gid))
 	// 24:32 is rdev, but this is always zero
 	set(updatestat[24:32], 0)
-	set(updatestat[32:40], info.Size)
+	set(updatestat[32:40], int64(info.st_size))
 	// fmt.Printf("key is %v\n", updatestat)
 	key := hmacSha256ForData(updatestat[:], nil)
 	return key
