@@ -11,6 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+
+	"github.com/dsnet/compress/bzip2"
+	"github.com/ulikunitz/xz"
 )
 
 const DebugFullfiles = false
@@ -22,7 +25,9 @@ var fullfileCompressors = []struct {
 	Func                compressFunc
 	ExternalTarExtraArg string
 }{
+	{"bzip2", compressBzip2, ""},
 	{"gzip", compressGzip, ""},
+	{"xz", compressXZ, ""},
 	{"external-tar-bzip2", nil, "--bzip2"},
 	{"external-tar-gzip", nil, "--gzip"},
 	{"external-tar-xz", nil, "--xz"},
@@ -335,6 +340,18 @@ func getHeaderFromFileInfo(fi os.FileInfo) (*tar.Header, error) {
 	return tar.FileInfoHeader(fi, "")
 }
 
+func compressBzip2(dst io.Writer, src io.Reader) error {
+	bw, err := bzip2.NewWriter(dst, nil)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(bw, src)
+	if err != nil {
+		return err
+	}
+	return bw.Close()
+}
+
 func compressGzip(dst io.Writer, src io.Reader) error {
 	gw := gzip.NewWriter(dst)
 	_, err := io.Copy(gw, src)
@@ -342,4 +359,16 @@ func compressGzip(dst io.Writer, src io.Reader) error {
 		return err
 	}
 	return gw.Close()
+}
+
+func compressXZ(dst io.Writer, src io.Reader) error {
+	xw, err := xz.NewWriter(dst)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(xw, src)
+	if err != nil {
+		return err
+	}
+	return xw.Close()
 }
