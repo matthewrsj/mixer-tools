@@ -497,7 +497,7 @@ func TestNewDeleted(t *testing.T) {
 	}
 
 	mNew := Manifest{
-		DeletedFiles: []*File{
+		Files: []*File{
 			{Name: "1"},
 			{Name: "2"},
 			{Name: "3"},
