@@ -264,11 +264,6 @@ func (m *Manifest) ReadManifestFromFile(f string) error {
 	return err
 }
 
-// Correct visability
-func (f *File) FlagString() (string, error) {
-	return f.getFlagString()
-}
-
 // what a manifest file looks like
 // could replace the tabs with \t if we convert this to a normal rather than raw string.
 const manifestTemplate = `
@@ -284,7 +279,7 @@ includes:	{{.Name}}
 {{- end}}
 {{- end}}
 {{ range .Files}}
-{{.FlagString}}	{{.Hash}}	{{.Version}}	{{.Name}}
+{{.GetFlagString}}	{{.Hash}}	{{.Version}}	{{.Name}}
 {{- end}}
 `
 
