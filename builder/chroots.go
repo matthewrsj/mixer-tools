@@ -3,6 +3,7 @@ package builder
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -77,6 +78,36 @@ func readBuildChrootsConfig(path string) (*buildChrootsConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func (b *bundle) getFileListFromChroot(chroot string) error {
+	return filepath.Walk(chroot, func(path string, fi os.FileInfo, err error) error {
+		fpath := strings.TrimPrefix(path, chroot)
+		if fpath == "" {
+			return nil
+		}
+
+		b.Files = append(b.Files, fpath)
+		return nil
+	})
+}
+
+func writeBundleInfo(bundle *bundle, path string) error {
+	b, err := json.Marshal(*bundle)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(path, b, 0644)
+}
+
+func genBundleJSON(bundle *bundle, chrootPath, jsonPath string) error {
+	err := bundle.getFileListFromChroot(chrootPath)
+	if err != nil {
+		return err
+	}
+
+	return writeBundleInfo(bundle, jsonPath)
 }
 
 func (b *Builder) buildBundleChroots(set bundleSet) error {
@@ -170,34 +201,8 @@ src=%s
 	if err != nil {
 		return err
 	}
-	for name, bundle := range set {
-		// TODO: Should we embed this information in groups.ini? (Maybe rename it to bundles.ini)
-		var includes bytes.Buffer
-		for _, inc := range bundle.DirectIncludes {
-			fmt.Fprintf(&includes, "%s\n", inc)
-		}
-		err = ioutil.WriteFile(filepath.Join(chrootVersionDir, name+"-includes"), includes.Bytes(), 0644)
-		if err != nil {
-			return err
-		}
-	}
 
 	fmt.Println("Creating os-core chroot")
-	osCoreDir := filepath.Join(chrootVersionDir, "os-core")
-	err = os.MkdirAll(filepath.Join(osCoreDir, "var/lib/rpm"), 0755)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Initializing RPM database")
-	err = helpers.RunCommandSilent(
-		"rpm",
-		"--root", osCoreDir,
-		"--initdb",
-	)
-	if err != nil {
-		return err
-	}
 
 	packagerCmd := []string{
 		"dnf",
@@ -208,101 +213,49 @@ src=%s
 
 	fmt.Printf("Packager command-line: %s\n", strings.Join(packagerCmd, " "))
 
-	fmt.Println("Installing filesystem package in os-core")
-	installArgs := merge(packagerCmd,
-		"--installroot="+osCoreDir,
-		"install",
-		"filesystem",
-	)
-	err = helpers.RunCommandSilent(installArgs[0], installArgs[1:]...)
-	if err != nil {
-		return err
-	}
-
-	clearDir := filepath.Join(osCoreDir, "usr/share/clear")
-	err = os.MkdirAll(filepath.Join(clearDir, "bundles"), 0755)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Installing packages in os-core")
-	err = installPackagesToBundleChroot(packagerCmd, chrootVersionDir, set["os-core"])
-	if err != nil {
-		return err
-	}
-
-	// Writing special files identifying the version in os-core.
-	err = ioutil.WriteFile(filepath.Join(clearDir, "version"), []byte(version), 0644)
-	if err != nil {
-		return err
-	}
-	// TODO: This seems to be the only thing that makes two consecutive chroots of the same
-	// version to be different. Use SOURCE_DATE_EPOCH if available?
-	versionstamp := fmt.Sprint(time.Now().Unix())
-	err = ioutil.WriteFile(filepath.Join(clearDir, "versionstamp"), []byte(versionstamp), 0644)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("Creating 'versions' file")
-	err = createVersionsFile(chrootVersionDir, packagerCmd)
-	if err != nil {
-		return errors.Wrapf(err, "couldn't create the versions file")
-	}
-
-	err = fixOSRelease(filepath.Join(osCoreDir, "usr/lib/os-release"), version)
-	if err != nil {
-		return errors.Wrap(err, "couldn't fix os-release file")
-	}
-
+	updateBundle := set[cfg.UpdateBundle]
+	totalBundles := len(set)
+	i := 0
 	fmt.Println("Creating chroots for bundles")
 	// TODO: Use goroutines.
 	for _, bundle := range set {
-		if bundle.Name == "os-core" {
-			continue
-		}
-
-		fmt.Printf("Creating %s chroot\n", bundle.Name)
-		err = helpers.RunCommandSilent("cp", "-a", "--preserve=all", osCoreDir, filepath.Join(chrootVersionDir, bundle.Name))
+		i++
+		fmt.Printf("[%d/%d] Creating %s chroot\n", i, totalBundles, bundle.Name)
+		bundleDir := filepath.Join(chrootVersionDir, bundle.Name)
+		fmt.Printf("... bootstrapping os-core into %s\n", bundle.Name)
+		err = bootstrapOsCore(packagerCmd, bundleDir)
 		if err != nil {
 			return err
 		}
 
-		fmt.Printf("Installing packages to %s\n", bundle.Name)
+		fmt.Printf("... Installing packages to %s\n", bundle.Name)
 		err = installPackagesToBundleChroot(packagerCmd, chrootVersionDir, bundle)
 		if err != nil {
 			return err
+		}
+
+		if bundle == updateBundle {
+			err = addUpdateBundleSpecialFiles(b, bundleDir)
+			if err != nil {
+				return err
+			}
 		}
 
 		err = cleanBundleChroot(chrootVersionDir, bundle)
 		if err != nil {
 			return err
 		}
-	}
 
-	fmt.Printf("Adding swupd default values to '%s' bundle\n", cfg.UpdateBundle)
-	swupdDir := filepath.Join(chrootVersionDir, cfg.UpdateBundle, "usr/share/defaults/swupd")
-	err = os.MkdirAll(swupdDir, 0755)
-	if err != nil {
-		return err
-	}
-	err = ioutil.WriteFile(filepath.Join(swupdDir, "contenturl"), []byte(cfg.ContentURL), 0644)
-	if err != nil {
-		return err
-	}
-	err = ioutil.WriteFile(filepath.Join(swupdDir, "versionurl"), []byte(cfg.VersionURL), 0644)
-	if err != nil {
-		return err
-	}
-	err = ioutil.WriteFile(filepath.Join(swupdDir, "format"), []byte(b.Format), 0644)
-	if err != nil {
-		return err
-	}
+		err = genBundleJSON(bundle, bundleDir, bundleDir+"-info")
+		if err != nil {
+			return err
+		}
 
-	// Cleaning os-core bundles after all the other bundles already used it for bootstrapping.
-	err = cleanBundleChroot(chrootVersionDir, set["os-core"])
-	if err != nil {
-		return err
+		// remove bundle chroot
+		err = os.RemoveAll(bundleDir)
+		if err != nil {
+			return err
+		}
 	}
 
 	err = os.RemoveAll(filepath.Join(outputDir, version))
@@ -310,28 +263,12 @@ src=%s
 		return err
 	}
 
-	// TODO: Remove usage of noship directory. The image/NN is not shipped as part of the
-	// update, so the files can remain where they are.
-	fmt.Println("Copying files to noship/ directory")
-	noshipDir := filepath.Join(chrootVersionDir, "noship")
-	err = os.MkdirAll(noshipDir, 0755)
+	// install all bundles in the set (including os-core) to the full chroot
+	err = buildFullChroot(cfg, b, &set, packagerCmd, chrootVersionDir, version)
 	if err != nil {
 		return err
 	}
-	fis, err := ioutil.ReadDir(chrootVersionDir)
-	if err != nil {
-		return err
-	}
-	for _, fi := range fis {
-		name := fi.Name()
-		if !strings.HasPrefix(name, "packages-") && !strings.HasSuffix(name, "-includes") {
-			continue
-		}
-		err = helpers.CopyFile(filepath.Join(noshipDir, name), filepath.Join(chrootVersionDir, name))
-		if err != nil {
-			return err
-		}
-	}
+
 	return nil
 }
 
@@ -341,6 +278,7 @@ func createVersionsFile(baseDir string, packagerCmd []string) error {
 	// TODO: See if we query the list of packages some other way? Yum output is a bit
 	// unfriendly, see the workarounds below. When we move to dnf we may have better options.
 	args := merge(packagerCmd,
+		"--quiet",
 		"--installroot="+filepath.Join(baseDir, "os-core"),
 		"list",
 	)
@@ -480,6 +418,177 @@ func fixOSRelease(filename, version string) error {
 	return ioutil.WriteFile(filename, newBuf.Bytes(), 0644)
 }
 
+func installFilesystem(packagerCmd []string, chrootDir string) error {
+	installArgs := merge(packagerCmd,
+		"--installroot="+chrootDir,
+		"install",
+		"filesystem",
+	)
+	return helpers.RunCommandSilent(installArgs[0], installArgs[1:]...)
+}
+
+func createClearDir(chrootDir, version string) error {
+	clearDir := filepath.Join(chrootDir, "usr/share/clear")
+	err := os.MkdirAll(filepath.Join(clearDir, "bundles"), 0755)
+	if err != nil {
+		return err
+	}
+
+	// Writing special files identifying the version in os-core.
+	err = ioutil.WriteFile(filepath.Join(clearDir, "version"), []byte(version), 0644)
+	if err != nil {
+		return err
+	}
+	// TODO: This seems to be the only thing that makes two consecutive chroots of the same
+	// version to be different. Use SOURCE_DATE_EPOCH if available?
+	versionstamp := fmt.Sprint(time.Now().Unix())
+	return ioutil.WriteFile(filepath.Join(clearDir, "versionstamp"), []byte(versionstamp), 0644)
+}
+
+func initRPMDB(chrootDir string) error {
+	err := os.MkdirAll(filepath.Join(chrootDir, "var/lib/rpm"), 0755)
+	if err != nil {
+		return err
+	}
+
+	return helpers.RunCommandSilent(
+		"rpm",
+		"--root", chrootDir,
+		"--initdb",
+	)
+}
+
+func buildOsCore(packagerCmd []string, chrootDir, version string) error {
+	err := initRPMDB(chrootDir)
+	if err != nil {
+		return err
+	}
+
+	if err := installFilesystem(packagerCmd, chrootDir); err != nil {
+		return err
+	}
+
+	if err := createClearDir(chrootDir, version); err != nil {
+		return err
+	}
+
+	if err := fixOSRelease(filepath.Join(chrootDir, "usr/lib/os-release"), version); err != nil {
+		return errors.Wrap(err, "couldn't fix os-release file")
+	}
+
+	if err := createVersionsFile(filepath.Dir(chrootDir), packagerCmd); err != nil {
+		return errors.Wrapf(err, "couldn't create the versions file")
+	}
+
+	return nil
+}
+
+func addSpecialFiles(filesToAdd []string, chrootDir string) error {
+	for _, path := range filesToAdd {
+		fullPath := filepath.Join(chrootDir, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+			return errors.Wrapf(err, "couldn't create special directory")
+		}
+
+		if _, err := os.OpenFile(fullPath, os.O_RDONLY|os.O_CREATE, 0644); err != nil {
+			return errors.Wrapf(err, "couldn't create special file")
+		}
+	}
+
+	return nil
+}
+
+func addOsCoreSpecialFiles(basePath string) error {
+	// slice of special os-core files
+	// intermediate directories are automatically created
+	// do not add directories to this list
+	filesToAdd := []string{
+		"/usr/lib/os-release",
+		"/usr/share/clear/version",
+		"/usr/share/clear/versionstamp",
+	}
+
+	return addSpecialFiles(filesToAdd, basePath)
+}
+
+func bootstrapOsCore(packagerCmd []string, chrootDir string) error {
+	err := initRPMDB(chrootDir)
+	if err != nil {
+		return err
+	}
+
+	if err = installFilesystem(packagerCmd, chrootDir); err != nil {
+		return err
+	}
+
+	return addOsCoreSpecialFiles(chrootDir)
+}
+
+func addUpdateBundleSpecialFiles(b *Builder, chrootDir string) error {
+	// slice of special update bundle files
+	// intermediate directories are automatically created
+	// do not add directories to this list
+	filesToAdd := []string{
+		"/usr/share/defaults/swupd/contenturl",
+		"/usr/share/defaults/swupd/versionurl",
+		"/usr/share/defaults/swupd/format",
+		"/usr/share/clear/update-ca/Swupd_Root.pem",
+	}
+
+	if _, err := os.Stat(b.Cert); err == nil {
+		filesToAdd = append(filesToAdd, "/usr/share/clear/update-ca/Swupd_Root.pem")
+	}
+
+	return addSpecialFiles(filesToAdd, chrootDir)
+}
+
+func genUpdateBundleSpecialFiles(chrootDir string, cfg *buildChrootsConfig, b *Builder) error {
+	swupdDir := filepath.Join(chrootDir, "usr/share/defaults/swupd")
+	if err := os.MkdirAll(swupdDir, 0755); err != nil {
+		return err
+	}
+	if err := ioutil.WriteFile(filepath.Join(swupdDir, "contenturl"), []byte(cfg.ContentURL), 0644); err != nil {
+		return err
+	}
+	if err := ioutil.WriteFile(filepath.Join(swupdDir, "versionurl"), []byte(cfg.VersionURL), 0644); err != nil {
+		return err
+	}
+
+	// Only copy the certificate into the mix if it exists
+	if _, err := os.Stat(b.Cert); err == nil {
+		certdir := filepath.Join(chrootDir, "/usr/share/clear/update-ca")
+		err = os.MkdirAll(certdir, 0755)
+		if err != nil {
+			return err
+		}
+		chrootcert := filepath.Join(certdir, "/Swupd_Root.pem")
+		err = helpers.CopyFile(chrootcert, b.Cert)
+		if err != nil {
+			return err
+		}
+	}
+
+	return ioutil.WriteFile(filepath.Join(swupdDir, "format"), []byte(b.Format), 0644)
+}
+
+func installBundleToFull(packagerCmd []string, chrootVersionDir string, bundle *bundle) error {
+	baseDir := filepath.Join(chrootVersionDir, "full")
+	args := merge(packagerCmd, "--installroot="+baseDir, "install")
+	args = append(args, bundle.AllPackages...)
+	err := helpers.RunCommandSilent(args[0], args[1:]...)
+	if err != nil {
+		return err
+	}
+
+	bundleDir := filepath.Join(baseDir, "usr/share/clear/bundles")
+	err = os.MkdirAll(filepath.Join(bundleDir), 0755)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(filepath.Join(bundleDir, bundle.Name), nil, 0644)
+}
+
 func installPackagesToBundleChroot(packagerCmd []string, chrootVersionDir string, bundle *bundle) error {
 	baseDir := filepath.Join(chrootVersionDir, bundle.Name)
 	args := merge(packagerCmd,
@@ -492,7 +601,13 @@ func installPackagesToBundleChroot(packagerCmd []string, chrootVersionDir string
 		return err
 	}
 
-	err = ioutil.WriteFile(filepath.Join(baseDir, "usr/share/clear/bundles", bundle.Name), nil, 0644)
+	bundleDir := filepath.Join(baseDir, "usr/share/clear/bundles")
+	err = os.MkdirAll(filepath.Join(bundleDir), 0755)
+	if err != nil {
+		return err
+	}
+
+	err = ioutil.WriteFile(filepath.Join(bundleDir, bundle.Name), nil, 0644)
 	if err != nil {
 		return err
 	}
@@ -553,6 +668,38 @@ func cleanBundleChroot(chrootVersionDir string, bundle *bundle) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func buildFullChroot(cfg *buildChrootsConfig, b *Builder, set *bundleSet, packagerCmd []string, chrootVersionDir, version string) error {
+	fmt.Println("Installing all bundles to full chroot")
+	totalBundles := len(*set)
+	i := 0
+	for _, bundle := range *set {
+		i++
+		fmt.Printf("[%d/%d] %s\n", i, totalBundles, bundle.Name)
+		fullDir := filepath.Join(chrootVersionDir, "full")
+		// special handling for os-core
+		if bundle.Name == "os-core" {
+			fmt.Println("... building special os-core content")
+			if err := buildOsCore(packagerCmd, fullDir, version); err != nil {
+				return err
+			}
+		}
+
+		if err := installBundleToFull(packagerCmd, chrootVersionDir, bundle); err != nil {
+			return err
+		}
+
+		// special handling for update bundle
+		if bundle.Name == cfg.UpdateBundle {
+			fmt.Printf("... Adding swupd default values to %s bundle\n", bundle.Name)
+			if err := genUpdateBundleSpecialFiles(fullDir, cfg, b); err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 

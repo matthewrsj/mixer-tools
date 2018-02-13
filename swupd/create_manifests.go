@@ -78,9 +78,12 @@ func getOldManifest(path string) *Manifest {
 
 func processBundles(ui UpdateInfo, c config) ([]*Manifest, error) {
 	var newFull *Manifest
+	var err error
 	tmpManifests := []*Manifest{}
+	totalBundles := len(ui.bundles)
 	// first loop sets up initial bundle manifests and adds files to them
-	for _, bundleName := range ui.bundles {
+	for i, bundleName := range ui.bundles {
+		fmt.Printf("[%d/%d] %s\n", i+1, totalBundles, bundleName)
 		bundle := &Manifest{
 			Header: ManifestHeader{
 				Format:    ui.format,
@@ -95,11 +98,19 @@ func processBundles(ui UpdateInfo, c config) ([]*Manifest, error) {
 			// track full manifest so we can do extra processing later
 			// (maximizeFull)
 			newFull = bundle
-		}
-
-		bundleChroot := filepath.Join(c.imageBase, fmt.Sprint(ui.version), bundle.Name)
-		if err := bundle.addFilesFromChroot(bundleChroot); err != nil {
-			return nil, err
+			chroot := filepath.Join(c.imageBase, fmt.Sprint(ui.version), "full")
+			if err := newFull.addFilesFromChroot(chroot); err != nil {
+				return nil, err
+			}
+		} else {
+			biPath := filepath.Join(c.imageBase, fmt.Sprint(ui.version), bundle.Name+"-info")
+			err = bundle.getBundleInfo(biPath)
+			if err != nil {
+				return nil, err
+			}
+			if err := bundle.addFilesFromBundleInfo(c, ui.version); err != nil {
+				return nil, err
+			}
 		}
 
 		// detect type changes
@@ -121,7 +132,7 @@ func processBundles(ui UpdateInfo, c config) ([]*Manifest, error) {
 	for _, bundle := range tmpManifests {
 		if bundle.Name != "os-core" && bundle != newFull {
 			// read in bundle includes
-			if err := bundle.readIncludes(tmpManifests, c); err != nil {
+			if err := bundle.readIncludesFromBundleInfo(tmpManifests); err != nil {
 				return nil, err
 			}
 		}
@@ -221,12 +232,6 @@ func CreateManifests(version uint32, minVersion uint32, format uint, statedir st
 	}
 
 	if err = initBuildDirs(version, groups, c.imageBase); err != nil {
-		return nil, err
-	}
-
-	// create new chroot from all bundle chroots
-	// TODO: this should be its own thing that an earlier step in mixer does
-	if err = createNewFullChroot(version, groups, c.imageBase); err != nil {
 		return nil, err
 	}
 

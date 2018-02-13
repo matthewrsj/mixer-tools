@@ -46,10 +46,6 @@ const Version = "3.2.1"
 // swupd-server (package swupd) when possible. This is an experimental feature.
 var UseNewSwupdServer = false
 
-// UseNewChrootBuilder controls whether to use the new implementation of
-// building the chroots. This is an experimental feature.
-var UseNewChrootBuilder = false
-
 // A Builder contains all configurable fields required to perform a full mix
 // operation, and is used to encapsulate life time data.
 type Builder struct {
@@ -329,7 +325,7 @@ func (b *Builder) ReadBuilderConf() error {
 		dest     *string
 		required bool
 	}{
-		{`^BUNDLE_DIR\s*=\s*`, &b.BundleDir, true}, //Note: Can be removed once UseNewChrootBuilder is obsolete
+		{`^BUNDLE_DIR\s*=\s*`, &b.BundleDir, true}, //Note: Can be removed once UseNewSwupdServer is obsolete
 		{`^CERT\s*=\s*`, &b.Cert, true},
 		{`^CLEARVER\s*=\s*`, &b.UpstreamVer, false},
 		{`^FORMAT\s*=\s*`, &b.Format, true},
@@ -1167,7 +1163,7 @@ func (b *Builder) UpdateMixVer() error {
 // clear the dir if it exists, compute the full list of bundles for the mix, and
 // copy the corresponding bundle files into mix-bundles/
 // Note: this function is only needed for the old Bundle Chroot Builder, and can
-// be removed once the UseNewChrootBuilder flag is gone.
+// be removed once the UseNewSwupdServer flag is gone.
 func (b *Builder) createMixBundleDir() error {
 	// Wipe out the existing bundle dir, if it exists
 	if err := os.RemoveAll(b.BundleDir); err != nil {
@@ -1250,7 +1246,15 @@ func (b *Builder) BuildChroots(template *x509.Certificate, privkey *rsa.PrivateK
 		}
 	}
 
-	if UseNewChrootBuilder {
+	// Generate the certificate needed for signing verification if it does not exist and insert it into the chroot
+	if signflag == false && template != nil {
+		err := helpers.GenerateCertificate(b.Cert, template, template, &privkey.PublicKey, privkey)
+		if err != nil {
+			return err
+		}
+	}
+
+	if UseNewSwupdServer {
 		// Get the set of bundles for which to build chroots
 		set, err := b.getFullMixBundleSet()
 		if err != nil {
@@ -1293,30 +1297,22 @@ func (b *Builder) BuildChroots(template *x509.Certificate, privkey *rsa.PrivateK
 		if err != nil {
 			return err
 		}
-	}
 
-	// Generate the certificate needed for signing verification if it does not exist and insert it into the chroot
-	if signflag == false && template != nil {
-		err := helpers.GenerateCertificate(b.Cert, template, template, &privkey.PublicKey, privkey)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Only copy the certificate into the mix if it exists
-	if _, err := os.Stat(b.Cert); err == nil {
-		certdir := b.StateDir + "/image/" + b.MixVer + "/os-core-update/usr/share/clear/update-ca"
-		err = os.MkdirAll(certdir, 0755)
-		if err != nil {
-			helpers.PrintError(err)
-			return err
-		}
-		chrootcert := certdir + "/Swupd_Root.pem"
-		fmt.Println("Copying Certificate into chroot...")
-		err = helpers.CopyFile(chrootcert, b.Cert)
-		if err != nil {
-			helpers.PrintError(err)
-			return err
+		// Only copy the certificate into the mix if it exists
+		if _, err := os.Stat(b.Cert); err == nil {
+			certdir := b.StateDir + "/image/" + b.MixVer + "/os-core-update/usr/share/clear/update-ca"
+			err = os.MkdirAll(certdir, 0755)
+			if err != nil {
+				helpers.PrintError(err)
+				return err
+			}
+			chrootcert := certdir + "/Swupd_Root.pem"
+			fmt.Println("Copying Certificate into chroot...")
+			err = helpers.CopyFile(chrootcert, b.Cert)
+			if err != nil {
+				helpers.PrintError(err)
+				return err
+			}
 		}
 	}
 

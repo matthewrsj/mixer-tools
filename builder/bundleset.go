@@ -23,6 +23,7 @@ type bundle struct {
 	DirectIncludes []string
 	DirectPackages []string
 	AllPackages    []string
+	Files          []string
 }
 
 type bundleSet map[string]*bundle
