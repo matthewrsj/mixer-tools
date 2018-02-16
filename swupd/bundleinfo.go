@@ -35,7 +35,23 @@ type bundleInfo struct {
 func (m *Manifest) getBundleInfo(path string) error {
 	var err error
 	if _, err = os.Stat(path); os.IsNotExist(err) {
-		return err
+		basePath := filepath.Dir(path)
+		err = m.addFilesFromChroot(filepath.Join(filepath.Dir(path), m.Name))
+		if err != nil {
+			return err
+		}
+		for _, f := range m.Files {
+			m.bundleInfo.Files = append(m.bundleInfo.Files, f.Name)
+		}
+		m.Files = []*File{}
+
+		includes := []string{}
+		includes, err = readIncludesFile(filepath.Join(basePath, m.Name+"-includes"))
+		if err != nil {
+			return err
+		}
+		m.bundleInfo.DirectIncludes = includes
+		return nil
 	}
 
 	biBytes, err := ioutil.ReadFile(path)
