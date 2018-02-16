@@ -55,12 +55,14 @@ func TestCreateManifestsBadMinVersion(t *testing.T) {
 	}
 }
 
-func TestCreateManifests(t *testing.T) {
-	testDir := mustSetupTestDir(t, "basic")
-	defer removeIfNoErrors(t, testDir)
-	mustInitStandardTest(t, testDir, "0", "10", []string{"test-bundle"})
-	mustGenFile(t, testDir, "10", "test-bundle", "foo", "content")
-	mustCreateManifestsStandard(t, 10, testDir)
+func TestCreateManifestsBasicTest(t *testing.T) {
+	ts := newTestSwupd(t, "vanilla-create-manifests")
+	defer ts.cleanup()
+
+	ts.Bundles = []string{"test-bundle"}
+
+	ts.write("image/10/test-bundle/foo", "content")
+	ts.createManifests(10)
 
 	expSubs := []string{
 		"MANIFEST\t1",
@@ -73,18 +75,17 @@ func TestCreateManifests(t *testing.T) {
 		"10\t/foo",
 		"10\t/usr/share",
 	}
-	checkManifestContains(t, testDir, "10", "test-bundle", expSubs...)
+	checkManifestContains(t, ts.Dir, "10", "test-bundle", expSubs...)
 
 	nExpSubs := []string{
 		"\t0\t/foo",
 		".d..\t",
 	}
-	checkManifestNotContains(t, testDir, "10", "test-bundle", nExpSubs...)
-	checkManifestNotContains(t, testDir, "10", "MoM", "10\tManifest.full")
+	checkManifestNotContains(t, ts.Dir, "10", "test-bundle", nExpSubs...)
+	checkManifestNotContains(t, ts.Dir, "10", "MoM", "10\tManifest.full")
 
-	mustInitStandardTest(t, testDir, "10", "20", []string{"test-bundle"})
-	mustGenFile(t, testDir, "20", "test-bundle", "foo", "new content")
-	mustCreateManifestsStandard(t, 20, testDir)
+	ts.write("image/20/test-bundle/foo", "new content")
+	ts.createManifests(20)
 
 	expSubs = []string{
 		"MANIFEST\t1",
@@ -94,54 +95,52 @@ func TestCreateManifests(t *testing.T) {
 		"includes:\tos-core",
 		"20\t/foo",
 	}
-	checkManifestContains(t, testDir, "20", "test-bundle", expSubs...)
-	checkManifestNotContains(t, testDir, "20", "test-bundle", "10\t/foo")
-	checkManifestNotContains(t, testDir, "20", "MoM", "20\tManifest.full")
+	checkManifestContains(t, ts.Dir, "20", "test-bundle", expSubs...)
+	checkManifestNotContains(t, ts.Dir, "20", "test-bundle", "10\t/foo")
+	checkManifestNotContains(t, ts.Dir, "20", "MoM", "20\tManifest.full")
 }
 
 func TestCreateManifestsDeleteNoVerBump(t *testing.T) {
-	testDir := mustSetupTestDir(t, "deletenoverbump")
-	defer removeIfNoErrors(t, testDir)
-	mustInitStandardTest(t, testDir, "0", "10", []string{"test-bundle1", "test-bundle2"})
-	mustGenFile(t, testDir, "10", "test-bundle1", "foo", "content")
-	mustGenFile(t, testDir, "10", "test-bundle2", "foo", "content")
-	mustCreateManifestsStandard(t, 10, testDir)
+	ts := newTestSwupd(t, "delete-no-version-bump")
+	defer ts.cleanup()
+	ts.Bundles = []string{"test-bundle1", "test-bundle2"}
+	ts.write("image/10/test-bundle1/foo", "content")
+	ts.write("image/10/test-bundle2/foo", "content")
+	ts.createManifests(10)
 
-	checkManifestContains(t, testDir, "10", "full", "10\t/foo")
+	checkManifestContains(t, ts.Dir, "10", "full", "10\t/foo")
 
-	mustInitStandardTest(t, testDir, "10", "20", []string{"test-bundle1", "test-bundle2"})
-	mustGenFile(t, testDir, "20", "test-bundle1", "foo", "content")
-	mustCreateManifestsStandard(t, 20, testDir)
+	ts.write("image/20/test-bundle1/foo", "content")
+	ts.createManifests(20)
 
-	checkManifestContains(t, testDir, "20", "full", "10\t/foo")
-	checkManifestNotContains(t, testDir, "20", "full", "20\t/foo")
+	fileInManifest(t, ts.parseManifest(20, "full"), 10, "/foo")
 }
 
 func TestCreateManifestIllegalChar(t *testing.T) {
-	testDir := mustSetupTestDir(t, "illegalfname")
-	defer removeIfNoErrors(t, testDir)
-	mustInitStandardTest(t, testDir, "0", "10", []string{})
-	mustGenFile(t, testDir, "10", "os-core", "semicolon;", "")
-	mustCreateManifestsStandard(t, 10, testDir)
+	ts := newTestSwupd(t, "illegal-file-name")
+	defer ts.cleanup()
+	ts.write("image/10/os-core/semicolon;", "")
+	ts.createManifests(10)
 
-	checkManifestNotContains(t, testDir, "10", "os-core", "semicolon;")
+	fileNotInManifest(t, ts.parseManifest(10, "full"), "/semicolon;")
+	fileNotInManifest(t, ts.parseManifest(10, "os-core"), "/semicolon;")
 }
 
 func TestCreateManifestDebuginfo(t *testing.T) {
-	testDir := mustSetupTestDir(t, "debuginfo")
-	defer removeIfNoErrors(t, testDir)
-	mustInitStandardTest(t, testDir, "0", "10", []string{"test-bundle"})
+	ts := newTestSwupd(t, "debuginfo-banned")
+	defer ts.cleanup()
+	ts.Bundles = []string{"test-bundle"}
 	files := []string{"usr/bin/foobar", "usr/lib/debug/foo", "usr/src/debug/bar"}
 	for _, f := range files {
-		mustGenFile(t, testDir, "10", "test-bundle", f, "content")
+		ts.write(filepath.Join("image/10/test-bundle", f), "content")
 	}
 
-	mustCreateManifestsStandard(t, 10, testDir)
+	ts.createManifests(10)
 
-	checkManifestContains(t, testDir, "10", "test-bundle", "/usr/bin/foobar")
-
-	subs := []string{"/usr/lib/debug/foo", "/usr/src/debug/bar"}
-	checkManifestNotContains(t, testDir, "10", "test-bundle", subs...)
+	m := ts.parseManifest(10, "test-bundle")
+	fileInManifest(t, m, 10, "/usr/bin/foobar")
+	fileNotInManifest(t, m, "/usr/lib/debug/foo")
+	fileNotInManifest(t, m, "/usr/src/debug/bar")
 }
 
 func TestCreateManifestFormatNoDecrement(t *testing.T) {
@@ -169,45 +168,56 @@ func TestCreateManifestFormatNoDecrement(t *testing.T) {
 	}
 }
 
-func TestCreateManifestFormat(t *testing.T) {
-	testDir := mustSetupTestDir(t, "format")
-	defer removeIfNoErrors(t, testDir)
-	mustInitStandardTest(t, testDir, "0", "10", []string{})
-	mustGenFile(t, testDir, "10", "os-core", "baz", "bazcontent")
-	mustGenFile(t, testDir, "10", "os-core", "foo", "foocontent")
-	mustCreateManifestsStandard(t, 10, testDir)
+func TestCreateManifestFormatBasic(t *testing.T) {
+	ts := newTestSwupd(t, "format-basic-")
+	defer ts.cleanup()
+	ts.write("image/10/os-core/baz", "bazcontent")
+	ts.write("image/10/os-core/foo", "foocontent")
+	ts.createManifests(10)
 
-	mustInitStandardTest(t, testDir, "10", "20", []string{})
-	mustCreateManifests(t, 20, 20, 2, testDir)
+	ts.Format = 2
+	ts.createManifests(20)
 }
 
 func TestCreateManifestGhosted(t *testing.T) {
-	testDir := mustSetupTestDir(t, "ghosted")
-	defer removeIfNoErrors(t, testDir)
-	mustInitStandardTest(t, testDir, "0", "10", []string{"test-bundle"})
-	mustGenFile(t, testDir, "10", "test-bundle", "usr/lib/kernel/bar", "bar")
-	mustCreateManifestsStandard(t, 10, testDir)
+	ts := newTestSwupd(t, "ghosted")
+	defer ts.cleanup()
+	ts.Bundles = []string{"test-bundle"}
+	ts.write("image/10/test-bundle/usr/lib/kernel/bar", "bar")
+	ts.createManifests(10)
 
-	re := regexp.MustCompile("F\\.b\\.\t.*\t10\t/usr/lib/kernel/bar")
-	checkManifestMatches(t, testDir, "10", "full", re)
-
-	mustInitStandardTest(t, testDir, "10", "20", []string{"test-bundle"})
-	mustGenFile(t, testDir, "20", "test-bundle", "usr/lib/kernel/baz", "baz")
-	mustCreateManifestsStandard(t, 20, testDir)
-
-	res := []*regexp.Regexp{
-		regexp.MustCompile("\\.gb\\.\t.*\t20\t/usr/lib/kernel/bar"),
-		regexp.MustCompile("F\\.b\\.\t.*\t20\t/usr/lib/kernel/baz"),
+	f := fileInManifest(t, ts.parseManifest(10, "full"), 10, "/usr/lib/kernel/bar")
+	if f.Modifier != ModifierBoot {
+		t.Errorf("%s not marked as boot", f.Name)
 	}
-	checkManifestMatches(t, testDir, "20", "full", res...)
 
-	mustInitStandardTest(t, testDir, "20", "30", []string{"test-bundle"})
-	mustCreateManifestsStandard(t, 30, testDir)
+	ts.write("image/20/test-bundle/usr/lib/kernel/baz", "baz")
+	ts.createManifests(20)
 
-	checkManifestNotContains(t, testDir, "30", "full", "/usr/lib/kernel/bar")
+	m20 := ts.parseManifest(20, "full")
+	f1 := fileInManifest(t, m20, 20, "/usr/lib/kernel/bar")
+	if f1.Status != StatusGhosted {
+		t.Errorf("%s present in 20 full but expected to be ghosted", f1.Name)
+	}
+	if f1.Modifier != ModifierBoot {
+		t.Errorf("%s not marked as boot", f.Name)
+	}
+	f2 := fileInManifest(t, m20, 20, "/usr/lib/kernel/baz")
+	if f2.Status != StatusUnset {
+		t.Errorf("%s not present in 20 full but expected to be", f2.Name)
+	}
+	if f2.Modifier != ModifierBoot {
+		t.Errorf("%s not marked as boot", f2.Name)
+	}
 
-	re = regexp.MustCompile("\\.gb\\.\t.*\t30\t/usr/lib/kernel/baz")
-	checkManifestMatches(t, testDir, "30", "full", re)
+	ts.createManifests(30)
+
+	m30 := ts.parseManifest(30, "full")
+	fileNotInManifest(t, m30, "/usr/lib/kernel/bar")
+	f3 := fileInManifest(t, m30, 30, "/usr/lib/kernel/baz")
+	if f3.Status != StatusGhosted {
+		t.Errorf("%s present in 20 full but expected to be ghosted", f3.Name)
+	}
 }
 
 func TestCreateManifestIncludesDeduplicate(t *testing.T) {

@@ -630,6 +630,26 @@ func newTestSwupd(t *testing.T, prefix string) *testSwupd {
 	}
 }
 
+func (ts *testSwupd) createNewFullChroot(version uint32) error {
+	fullPath := filepath.Join(ts.path("image"), fmt.Sprint(version), "full")
+	// MkdirAll returns nil when the path exists, so we continue to do the
+	// full chroot creation over the existing one
+	if err := os.MkdirAll(fullPath, 0777); err != nil {
+		return err
+	}
+
+	ts.Bundles = append(ts.Bundles, "os-core")
+	for _, bundle := range ts.Bundles {
+		// append trailing slash to get contents only
+		bundlePath := filepath.Join(ts.path("image"), fmt.Sprint(version), bundle) + "/"
+		cmd := exec.Command("rsync", "-aAX", "--ignore-existing", bundlePath, fullPath)
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("rsync error: %v", err)
+		}
+	}
+	return nil
+}
+
 // Create Manifests and bump to next version.
 func (ts *testSwupd) createManifests(version uint32) *MoM {
 	ts.t.Helper()
@@ -641,6 +661,11 @@ func (ts *testSwupd) createManifests(version uint32) *MoM {
 
 	osRelease := fmt.Sprintf("VERSION_ID=%d\n", version)
 	ts.write(filepath.Join("image", fmt.Sprint(version), "os-core", "usr/lib/os-release"), osRelease)
+
+	err := ts.createNewFullChroot(version)
+	if err != nil {
+		ts.t.Fatalf("error creating full chroot for version %d: %s", version, err)
+	}
 
 	mom, err := CreateManifests(version, ts.MinVersion, ts.Format, ts.Dir)
 	if err != nil {
