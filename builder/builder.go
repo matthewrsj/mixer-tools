@@ -1997,6 +1997,35 @@ func (b *Builder) BuildDeltaPacksPreviousVersions(prev, to uint32, printReport b
 	return nil
 }
 
+// cleanOldPack removes the last delta pack
+func cleanOldPack(outputDir, fromBundle string, fromMoM *swupd.Manifest) error {
+	var packVersion uint32
+	for _, b := range fromMoM.Files {
+		if b.Name == fromBundle {
+			packVersion = b.Version
+			break
+		}
+	}
+	if packVersion == 0 {
+		return fmt.Errorf("unable to find bundle %s to clean up", fromBundle)
+	}
+
+	oldPackPath := filepath.Join(outputDir, fmt.Sprintf("%d/pack-%s-from-*.tar", packVersion, fromBundle))
+	result, err := filepath.Glob(oldPackPath)
+	if err != nil || len(result) != 2 {
+		return errors.Wrap(err, "unable to find old pack to clean up")
+	}
+
+	for _, path := range result {
+		if !strings.HasSuffix(path, "from-0.tar") {
+			fmt.Printf("Removing old pack %s\n", path)
+			return errors.Wrap(os.Remove(result[0]), "unable to remove old pack")
+		}
+	}
+
+	return errors.New("unable to find old pack to clean up")
+}
+
 func createDeltaPacks(from *swupd.Manifest, to *swupd.Manifest, printReport bool, outputDir, bundleDir string, numWorkers int) error {
 	timer := &stopWatch{w: os.Stdout}
 	defer timer.WriteSummary(os.Stdout)
@@ -2053,6 +2082,12 @@ func createDeltaPacks(from *swupd.Manifest, to *swupd.Manifest, printReport bool
 		}
 		fmt.Printf("    Fullfiles in pack: %d\n", info.FullfileCount)
 		fmt.Printf("    Deltas in pack: %d\n", info.DeltaCount)
+
+		// clean up old pack
+		err = cleanOldPack(outputDir, b.Name, from)
+		if err != nil {
+			fmt.Printf("    WARNING: %s\n", err.Error())
+		}
 	}
 
 	timer.Stop()
