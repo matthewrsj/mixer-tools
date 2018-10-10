@@ -117,7 +117,7 @@ func deltaTooLarge(c *config, delta *Delta, newPath string) bool {
 		return false
 	}
 	deltaSize := dInfo.Size()
-	fHash, err := GetHashForFile(newPath)
+	fHash, err := SimpleHashForFile(newPath)
 	if err != nil {
 		return false
 	}

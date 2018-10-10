@@ -185,3 +185,63 @@ func TestHashcalcRealFile(t *testing.T) {
 	}
 
 }
+
+func BenchmarkHalshcalcMult(b *testing.B) {
+	testCases := []string{
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+		"/usr/share/defaults/etc/protocols",
+		"/usr/share/doc/systemd/LICENSE.GPL2",
+	}
+	for n := 0; n < b.N; n++ {
+		for _, f := range testCases {
+			_, _ = GetHashForFile(f)
+			_, _ = GetHashForFile(f)
+			_, _ = GetHashForFile(f)
+		}
+	}
+}
